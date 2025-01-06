@@ -19,6 +19,7 @@ endif()
 
 add_executable(piper src/cpp/main.cpp src/cpp/piper.cpp)
 add_executable(test_piper src/cpp/test.cpp src/cpp/piper.cpp)
+add_library(piperApi SHARED src/cpp/api.cpp src/cpp/piper.cpp)
 
 # NOTE: external project prefix are shortened because of path length restrictions on Windows
 # NOTE: onnxruntime is pulled from piper-phonemize
@@ -136,10 +137,35 @@ target_link_libraries(test_piper PUBLIC
   onnxruntime
 )
 
+target_include_directories(piperApi PUBLIC
+  ${FMT_DIR}/include
+  ${SPDLOG_DIR}/include
+  ${PIPER_PHONEMIZE_DIR}/include
+)
+
+target_link_directories(piperApi PUBLIC
+  ${FMT_DIR}/lib
+  ${SPDLOG_DIR}/lib
+  ${PIPER_PHONEMIZE_DIR}/lib
+)
+
+target_link_libraries(piperApi
+  fmt
+  spdlog
+  espeak-ng
+  piper_phonemize
+  onnxruntime
+  ${PIPER_EXTRA_LIBRARIES}
+)
+
 # ---- Declare install targets ----
 
 install(
   TARGETS piper
+  DESTINATION ${CMAKE_INSTALL_PREFIX})
+  
+install(
+  TARGETS piperApi
   DESTINATION ${CMAKE_INSTALL_PREFIX})
 
 # Dependencies
