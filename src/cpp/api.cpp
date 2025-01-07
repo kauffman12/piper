@@ -3,69 +3,36 @@
 #include <mutex>
 #include <stdexcept>
 #include <string>
-
-#ifdef _MSC_VER
-#define WIN32_LEAN_AND_MEAN
-#define NOMINMAX
-#include <windows.h>
-#endif
-
-#ifdef _WIN32
-#include <fcntl.h>
-#include <io.h>
-#endif
-
-#ifdef __APPLE__
-#include <mach-o/dyld.h>
-#endif
-
 #include <spdlog/sinks/stdout_color_sinks.h>
 #include <spdlog/spdlog.h>
 #include "piper.hpp"
 
 using namespace std;
 
-std::map<int, piper::Voice> voices;
+std::map<std::string, piper::Voice> voices;
 std::mutex voiceMutex;
-int nextId = 1;
 
-std::string getEspeakPath() {
-#ifdef _MSC_VER
-  auto exePath = []() {
-    wchar_t moduleFileName[MAX_PATH] = {0};
-    GetModuleFileNameW(nullptr, moduleFileName, std::size(moduleFileName));
-    return filesystem::path(moduleFileName);
-  }();
-#else
-#ifdef __APPLE__
-  auto exePath = []() {
-    char moduleFileName[PATH_MAX] = {0};
-    uint32_t moduleFileNameSize = std::size(moduleFileName);
-    _NSGetExecutablePath(moduleFileName, &moduleFileNameSize);
-    return filesystem::path(moduleFileName);
-  }();
-#else
-  auto exePath = filesystem::canonical("/proc/self/exe");
-#endif
-#endif
-  return std::filesystem::absolute(exePath.parent_path().append("espeak-ng-data")).string();
-}
- 
-extern "C" __declspec(dllexport) void initialize() {
+// make client specify full path to espeak data
+extern "C" __declspec(dllexport) void initialize(const char* espeakDataPath) {
   // set debug
-  // spdlog::set_level(spdlog::level::debug);
+  //spdlog::set_level(spdlog::level::debug);
+  
+  if (!espeakDataPath) {
+    spdlog::error("espeak data path is null");
+    return;
+  }
 
   // enable espeak just incase some voices need it
   piper::PiperConfig piperConfig;
   piperConfig.useESpeak = true;
-  piperConfig.eSpeakDataPath = getEspeakPath();
+  piperConfig.eSpeakDataPath = std::string(espeakDataPath);
   piper::initialize(piperConfig);
 }
 
 extern "C" __declspec(dllexport) void release() {
   piper::PiperConfig piperConfig;
+  // set to make sure espeak terminate is called
   piperConfig.useESpeak = true;
-  piperConfig.eSpeakDataPath = getEspeakPath();
   // cleanup
   voices.clear();
   piper::terminate(piperConfig);
@@ -77,7 +44,7 @@ bool loadVoiceInternal(const char* modelPath, const char* configPath, piper::Voi
     return false;
   }
 
-  try {
+  try {   
     // default speaker setup
     std::optional<piper::SpeakerId> speakerId;
     piper::PiperConfig piperConfig;
@@ -89,48 +56,44 @@ bool loadVoiceInternal(const char* modelPath, const char* configPath, piper::Voi
   }
 }
 
-extern "C" __declspec(dllexport) int loadVoice(const char* modelPath, const char* configPath) {
+// make client specify full paths and manage their own user ids
+extern "C" __declspec(dllexport) int loadVoice(const char* id, const char* modelPath, const char* configPath) {
   std::lock_guard<std::mutex> lock(voiceMutex);
-
-  int id = nextId++;
-  piper::Voice voice;
-  if (loadVoiceInternal(modelPath, configPath, voice)) {
-    voices[id] = std::move(voice);
-    return id;
-  }
-  return -1;
-}
-
-extern "C" __declspec(dllexport) int updateVoice(int id, const char* modelPath, const char* configPath) {
-  std::lock_guard<std::mutex> lock(voiceMutex);
-
-  auto it = voices.find(id);
-  if (it == voices.end()) {
-    spdlog::error("voice ID {} not found.", id);
+  
+  if (!id) {
+    spdlog::error("id is null.");
     return -1;
   }
+
+  auto stringId = std::string(id);
+  auto it = voices.find(stringId);
+  if (it != voices.end()) {
+    voices.erase(it);
+  } 
+
   piper::Voice voice;
   if (loadVoiceInternal(modelPath, configPath, voice)) {
-    voices[id] = std::move(voice);
-    return id;
+    voices[stringId] = std::move(voice);
+    return 0;
   }
   return -1;
 }
 
-extern "C" __declspec(dllexport) long synthesize(int id, const char *text, int16_t** buffer) {
+extern "C" __declspec(dllexport) long synthesize(const char* id, const char *text, int16_t** buffer) {
   spdlog::debug("synthesizing for {}, {}", id, text);
   
-  if (!text) {
-    spdlog::error("text to speak is null.");
+  if (!text || !id) {
+    spdlog::error("text to speak or id is null.");
     return -1;
   }
    
   try {
     std::lock_guard<std::mutex> lock(voiceMutex);
     
-    auto it = voices.find(id);
+    auto stringId = std::string(id);
+    auto it = voices.find(stringId);
     if (it == voices.end()) {
-      spdlog::error("voice ID {} not found.", id);
+      spdlog::error("voice ID {} not found.", stringId);
       return -1; // error
     }
     
