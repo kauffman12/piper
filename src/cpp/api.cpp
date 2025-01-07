@@ -79,6 +79,23 @@ extern "C" __declspec(dllexport) int loadVoice(const char* id, const char* model
   return -1;
 }
 
+extern "C" __declspec(dllexport) int removeVoice(const char* id) {
+  std::lock_guard<std::mutex> lock(voiceMutex);
+  
+  if (!id) {
+    spdlog::error("id is null.");
+    return -1;
+  }
+
+  auto stringId = std::string(id);
+  auto it = voices.find(stringId);
+  if (it != voices.end()) {
+    voices.erase(it);
+  } 
+
+  return 0;
+}
+
 extern "C" __declspec(dllexport) long synthesize(const char* id, const char *text, int16_t** buffer) {
   spdlog::debug("synthesizing for {}, {}", id, text);
   
